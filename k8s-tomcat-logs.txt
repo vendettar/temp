@@ -1,0 +1,38 @@
+# ==========================================
+# 一、通过 Pod Name 拿日志
+# ==========================================
+POD="<pod-name>"
+
+# 1. 拷贝 Pod 内 Tomcat logs 目录（全部日志文件）到 ./<pod-name>.logs/ 目录
+kubectl cp "$POD":/usr/local/tomcat/logs "./${POD}.logs"
+
+# 2. 按修改时间过滤（例如最近 1 分钟 -mmin -1），只拉取符合条件的文件到 ./<pod-name>.logs/ 目录
+mkdir -p "./${POD}.logs" && kubectl exec "$POD" -- sh -c 'cd /usr/local/tomcat/logs && files=$(find . -type f -mmin -1); [ -n "$files" ] && tar czf - $files' | tar xzf - -C "./${POD}.logs"
+
+# 3. 仅拉取容器标准输出（stdout，支持 --since=1m，输出为单个文件）
+kubectl logs --since=1m "$POD" > "./${POD}.stdout.log"
+
+
+# ==========================================
+# 二、通过 Label (app=xxx) 拿日志（自动匹配 Pod，支持多副本）
+# ==========================================
+LABEL="app=xxx"
+
+# 1. 每个 Pod 单独存一个 ./<pod-name>.logs/ 目录（全部日志文件）
+for POD in $(kubectl get pod -l "$LABEL" -o jsonpath='{.items[*].metadata.name}'); do
+  kubectl cp "$POD":/usr/local/tomcat/logs "./${POD}.logs"
+done
+
+# 2. 统一放到 ./<app名>.logs/<pod-name>/ 目录下（全部日志文件）
+for POD in $(kubectl get pod -l "$LABEL" -o jsonpath='{.items[*].metadata.name}'); do
+  mkdir -p "./${LABEL#*=}.logs/${POD}"
+  kubectl cp "$POD":/usr/local/tomcat/logs "./${LABEL#*=}.logs/${POD}"
+done
+
+# 3. 按修改时间过滤（例如最近 1 分钟 -mmin -1），拉取到 ./<pod-name>.logs/ 目录
+for POD in $(kubectl get pod -l "$LABEL" -o jsonpath='{.items[*].metadata.name}'); do
+  mkdir -p "./${POD}.logs" && kubectl exec "$POD" -- sh -c 'cd /usr/local/tomcat/logs && files=$(find . -type f -mmin -1); [ -n "$files" ] && tar czf - $files' | tar xzf - -C "./${POD}.logs"
+done
+
+# 4. 仅拉取容器标准输出（stdout，支持 --since=1m，输出为单个文件）
+kubectl logs -l "$LABEL" --since=1m --prefix=true --all-containers=true > "./${LABEL#*=}.stdout.log"
